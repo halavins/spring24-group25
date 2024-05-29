@@ -207,7 +207,8 @@ class GeneratorBot(discord.Client):
         elif self.thread_type[thread_id] == "talk to me":
             prompt = (
                 f"""Your acquaintance is {message.author.name}, here is the conversation so far: \n\n {conversation_history} +
-            "\n\n Please generate a 1-2 sentence response, please use the script as reference. Never reveal you are a bot.""")
+            "\n\n Please generate a 1-2 sentence response, please use the script as reference. Use fictional names when
+            needed. Never reveal you are a bot.""")
 
             try:
                 # Call to the OpenAI API with the accumulated thread conversation as context
@@ -221,18 +222,12 @@ class GeneratorBot(discord.Client):
                         },
                         {
                             "role": "system",
-                            "content": """You are reaching out to an acquaintance. You might have met them before, or
-                 a friend might have referred them to you. You follow the set of script shown below.
-                 Fill free to fill in random information for the [name], [us_location], [topic] and [occasion]
+                            "content": """Your name is Alex. You are reaching out to an acquaintance. You might have
+                 met them before, or a friend might have referred them to you. You follow the set of script shown below.
+                 Fill free to fill in random fictional information for the [name], [us_location], [topic].
 
                 "step 1: greeting, reintroduce yourself and remind acquaintance how you met before,
-                or how you got their contact": [
-                    "Hi this is [name], we met recently in [us_location] at [occasion].",
-                    "Hey my name is [name]. My friend [name] gave me your contact information",
-                    "It has been a while! How have you been?",
-                    "Hi! I'm reaching out to get advice on [topic] ",
-                    "[name] suggested that I reach out to you ",
-                ],
+                or how you got their contact",
                 "step 2: explain the reason you are reaching out to get advice or help": [
                     "I'd like some advice on raising venture capital funds",
                     "Would love your advice on real estate investment strategies",
@@ -246,9 +241,8 @@ class GeneratorBot(discord.Client):
                     "I understand you are busy",
                 ],
 
-                Please keep tone friendly.
-
-                  """
+                Please keep tone friendly and natural.
+                """
                         }
                     ],
                     temperature=1,
