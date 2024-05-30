@@ -34,6 +34,7 @@ class GeneratorBot(discord.Client):
         self.reports = {} # Map from user IDs to the state of their report
         self.conversations = {}  # Store recent messages for context analysis
         self.threaded_conversations = {}
+        self.thread_type = {}
 
     async def on_ready(self):
         print(f'{self.user.name} has connected to Discord! It is these guilds:')
@@ -53,7 +54,7 @@ class GeneratorBot(discord.Client):
             for channel in guild.text_channels:
                 if channel.name == f'group-{self.group_num}':
                     self.mod_channels[guild.id] = channel
-        
+
 
     async def on_message(self, message):
 
@@ -81,6 +82,10 @@ class GeneratorBot(discord.Client):
         if not isinstance(message.channel, discord.Thread):
             if message.content.lower() == 'scam me':
                 thread = await message.create_thread(name=f"Scam Discussion with {message.author.display_name}")
+                self.thread_type[thread.id] = "scam me"
+            elif message.content.lower() == 'talk to me':
+                thread = await message.create_thread(name=f"Normal Discussion with {message.author.display_name}")
+                self.thread_type[thread.id] = "talk to me"
             else:
                 return
         else:
@@ -95,16 +100,13 @@ class GeneratorBot(discord.Client):
         response = await self.respond_to_thread_convo(message, thread.id)
         if response:
             await thread.send(response)
-            self.threaded_conversations[thread.id].append(f"Mallory: {response}")
+            self.threaded_conversations[thread.id].append(f"Bot: {response}")
 
     async def respond_to_thread_convo(self, message, thread_id):
         # Collecting conversation history from the thread
         past_convos = list(self.threaded_conversations[thread_id])
         conversation_history = '\n'.join(past_convos)
-        scam_me = True
-        if scam_me:
-
-
+        if self.thread_type[thread_id] == "scam me":
 
             prompt = (f"""Your victim is {message.author.name} and here is the conversation history so far: \n\n {conversation_history} +
             "\n\n It's your turn to speak next Mallory, what will you say? ", respond in first person and never say your own name in the conversation. Please keep it to the script and don't chitchat, don't ask similar questions esp. if the answer has been given already. Quickly move from one stage to another after one conversation. Never reveal you are a bot or a scammer. If the user is off topic, quickly get back to the original script.""")
@@ -198,6 +200,60 @@ class GeneratorBot(discord.Client):
             except Exception as e:
                 logger.error(f"Failed to generate response: {e}")
                 return "Sorry, I encountered an error while processing your request."
+
+        elif self.thread_type[thread_id] == "talk to me":
+            prompt = (
+                f"""Your acquaintance is {message.author.name}, here is the conversation so far: \n\n {conversation_history} +
+            "\n\n Please generate a 1-2 sentence response, please use the script as reference. Use fictional names when
+            needed. Never reveal you are a bot.""")
+
+            try:
+                # Call to the OpenAI API with the accumulated thread conversation as context
+                client = OpenAI(api_key=openai_token)
+                response = client.chat.completions.create(
+                    model="gpt-4-turbo",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        },
+                        {
+                            "role": "system",
+                            "content": """Your name is Alex. You are reaching out to an acquaintance. You might have
+                 met them before, or a friend might have referred them to you. You follow the set of script shown below.
+                 Fill free to fill in random fictional information for the [name], [us_location], [topic].
+
+                "step 1: greeting, reintroduce yourself and remind acquaintance how you met before,
+                or how you got their contact",
+                "step 2: explain the reason you are reaching out to get advice or help": [
+                    "I'd like some advice on raising venture capital funds",
+                    "Would love your advice on real estate investment strategies",
+                    "How to negotiable salary",
+                    "My person finance is a mess and would like your advice!",
+                    "I'd like your advice on retirement planning",
+                    "My cryto startup is looking for beta tester. Would youe be interested in giving us feedback?",
+                ],
+                "step 3: back down if the acquaintance show no interest in helping": [
+                    "Thanks for your time",
+                    "I understand you are busy",
+                ],
+
+                Please keep tone friendly and natural.
+                """
+                        }
+                    ],
+                    temperature=1,
+                    max_tokens=2560,
+                    top_p=1,
+                    frequency_penalty=0,
+                    presence_penalty=0
+                )
+                print(response)
+                return response.choices[0].message.content
+
+            except Exception as e:
+                logger.error(f"Failed to generate response: {e}")
+
         else:
             prompt = (
                 f"""Your conversation buddy is {message.author.name}, here is the conversation so far: \n\n {conversation_history} +
