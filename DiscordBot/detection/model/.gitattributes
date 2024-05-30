@@ -1,3 +1,0 @@
-channels_topics.json filter=lfs diff=lfs merge=lfs -text
-personas.json filter=lfs diff=lfs merge=lfs -text
-synthetic_full.json filter=lfs diff=lfs merge=lfs -text
