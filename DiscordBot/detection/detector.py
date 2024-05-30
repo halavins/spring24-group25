@@ -11,7 +11,7 @@ import discord
 import matplotlib.pyplot as plt
 from openai import OpenAI
 
-from DiscordBot.detection.model.model_inference import ScamClassifier
+from model.model_inference import ScamClassifier
 
 # Set up logging to the console
 logger = logging.getLogger('discord')
@@ -28,7 +28,7 @@ with open(token_path) as f:
     # If you get an error here, it means your token is formatted incorrectly. Did you put it in quotes?
     tokens = json.load(f)
     discord_token = tokens['discord']
-    openai_token = tokens['chatgpt']
+    openai_token = tokens['openai']
 
 
 class DetectorBot(discord.Client):
