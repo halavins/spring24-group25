@@ -1,0 +1,3 @@
+*.log
+generated_conversations/*.json
+scam_detection_model/model.safetensors
