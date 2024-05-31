@@ -25,9 +25,9 @@ def time_since_first(first, now):
   - there are normal non-investment chat
   - there are normal investment chats
   - there are investment (highly motivated scammer)
-  - there are investment (scripted scammers)
+  - there are investment (scripted bots)
 
-2) there are times when both people talking to one another are scammers (uncommon)
+2) there are times when both people talking to one another are bots (uncommon)
 
 """
 
