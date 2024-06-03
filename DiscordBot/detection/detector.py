@@ -2,16 +2,17 @@ import io
 import json
 import logging
 import os
+import random
 import re
 import textwrap
 from collections import deque
-import random
 
 import discord
 import matplotlib.pyplot as plt
+import numpy as np
 from openai import OpenAI
 
-from model.model_inference import ScamClassifier
+from DiscordBot.detection.rules.evaluator import RuleEngine
 
 # Set up logging to the console
 logger = logging.getLogger('discord')
@@ -32,7 +33,7 @@ with open(token_path) as f:
 
 
 class DetectorBot(discord.Client):
-    def __init__(self): 
+    def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix='.', intents=intents)
@@ -43,7 +44,7 @@ class DetectorBot(discord.Client):
         self.threaded_conversations = {}
         self.session_risk = {}
         self.last_sent_index = {}
-        self.classifier = ScamClassifier()
+        self.rule_evaluator = RuleEngine()
         self.alert_queue = {}
 
     async def on_ready(self):
@@ -64,7 +65,7 @@ class DetectorBot(discord.Client):
             for channel in guild.text_channels:
                 if channel.name == f'group-{self.group_num}-mod':
                     self.mod_channels[guild.id] = channel
-        
+
 
     async def on_message(self, message):
 
@@ -77,61 +78,109 @@ class DetectorBot(discord.Client):
 
     def construct_classification_input(self, message: discord.Message):
 
-        print(f"""speaker: {message.author.display_name}\nMessage: {self.threaded_conversations[message.channel.id]}\n\n""")
-
         chat_history = ' '.join([z.strip(message.author.display_name + ': ') for z in self.threaded_conversations[message.channel.id]
-                                     if message.author.display_name in z])
+                                 if message.author.display_name in z])
 
-        ip_fraud_score = random.randint(0, 100)
+        # Mocking the input since Discord Bot doesn't have access, though this is important signal to capture
+        ip_fraud_score = random.randint(50, 100)
         channel_topic = message.channel.name
-        feature_input = f"""Channel: {channel_topic} \nFraud Score: {ip_fraud_score} \nMessage: {chat_history}"""
-        return feature_input
+        convo_history = f"""Channel: {channel_topic} \nFraud Score: {ip_fraud_score} \nMessage: {chat_history}"""
+        return convo_history
     async def handle_channel_message(self, message: discord.Message):
-        print(message)
+
         discussion_channel = message.channel.name
         if isinstance(message.channel, discord.Thread):
             discussion_channel = message.channel.parent.name
         if not discussion_channel == f'group-{self.group_num}':
             return
 
-        thread = message.channel
-        if thread.id not in self.threaded_conversations:
-            self.threaded_conversations[thread.id] = deque(maxlen=100)
-            self.session_risk[thread.id] = {'highest_score': 0, 'entries': []}
-        self.track_conversation(message, thread.id)
+        thread_id = message.channel.id
+        self.track_conversation(message, thread_id)
 
         mod_channel = self.mod_channels[message.guild.id]
         if mod_channel:
             if self.should_evaluate(message):
-                classifier_feature = self.construct_classification_input(message)
-                if self.classifier.predict_scammer(classifier_feature) == 'Scam' or (message.channel.id in self.alert_queue and self.alert_queue['message.channel.id']['status'] != 'dismissed'):
+                features = self.construct_classification_input(message)
+                rule_eval_results = self.rule_evaluator.evaluate(message, features)
+                under_monitoring = (thread_id in self.alert_queue and self.alert_queue[thread_id]['status'] != 'dismissed')
 
+                if rule_eval_results or under_monitoring:
                     if message.channel.id not in self.alert_queue:
                         self.alert_queue[message.channel.id] = {
                             'status': 'watched'
                         }
                         await mod_channel.send(
-                            f"""Early Warning, Discussion {message.channel.id} Added to Watchlist!\n\n""")
+                            f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results]))
 
                     evaluation_result = self.evaluate_risk(message)
                     evaluation_result_dict = self.code_format(evaluation_result)
                     current_score = evaluation_result_dict["score"]
-                    highest_score = self.session_risk[thread.id]['highest_score']
-                    self.session_risk[thread.id]['entries'].append({
+                    highest_score = self.session_risk[thread_id]['highest_score']
+                    self.session_risk[thread_id]['entries'].append({
                         'datetime': message.created_at,
                         'score': current_score,
                         'message': message.content,
-                        'explanation': evaluation_result_dict["explanation"]
+                        'explanation': evaluation_result_dict["explanation"],
                     })
                     if evaluation_result_dict["score"] > 60 and (current_score > highest_score + 10):
-                        self.session_risk[thread.id]['highest_score'] = current_score  # Update the highest score
-                        await mod_channel.send(f"""Scam Alert!\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}""" )
+                        self.session_risk[thread_id]['highest_score'] = current_score  # Update the highest score
+                        await mod_channel.send(f"""\nScam Detected\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}""" )
                         await mod_channel.send(f'''\nExplanation: {evaluation_result_dict["explanation"]}''')
-                        await self.plot_scores(thread.id, self.mod_channels[message.guild.id])
+                        await self.plot_scores(thread_id, self.mod_channels[message.guild.id])
+                        await self.plot_radar(self.mod_channels[message.guild.id], evaluation_result_dict['deception_risk_factors'])
                         self.alert_queue[message.channel.id] = {
                             'status': 'alerted'
                         }
 
+    async def plot_radar(self, mod_channel, radar_data):
+        data = radar_data
+        # Extract the labels, scores, and explanations from the data
+        labels = list(data.keys())
+        scores = [data[label]['score'] for label in labels]
+        explanations = [data[label]['explanation'] for label in labels]
+
+        # Number of variables
+        num_vars = len(labels)
+
+        # Compute angle for each axis
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        scores += scores[:1]  # To complete the loop
+        angles += angles[:1]  # To complete the loop
+
+        # Create the radar chart
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(polar=True))
+
+        ax.fill(angles, scores, color='red', alpha=0.25)
+        ax.plot(angles, scores, color='red', linewidth=2)
+
+        # Draw one axe per variable + add labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=12)
+
+        # Draw ylabels
+        ax.set_rlabel_position(0)
+        plt.yticks([1, 2, 3], ["1", "2", "3"], color="grey", size=10)
+        plt.ylim(0, 3)
+
+        # Add title
+        plt.title('Scam Detection Radar Plot', size=20, color='red', y=1.1)
+
+        # Annotate each point with the explanation
+        for i, (angle, score, explanation) in enumerate(zip(angles[:-1], scores[:-1], explanations)):
+            if score != 0:
+                wrapped_text = textwrap.fill(explanation, width=50)
+                ax.annotate(f'{score}\n{wrapped_text}', xy=(angle, score), xytext=(angle, score + 0.5),
+                            textcoords='data', ha='center', va='center', fontsize=9,
+                            bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'))
+
+        # Save the plot to a BytesIO object
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+
+        # Send the plot to the Discord channel
+        await mod_channel.send(file=discord.File(buf, filename='scam_detection_radar.png'))
 
     async def plot_scores(self, thread_id, mod_channel):
         data_entries = self.session_risk[thread_id]['entries']
@@ -177,7 +226,7 @@ class DetectorBot(discord.Client):
             await mod_channel.send(file=discord.File(buf, filename='scam_detection_scores.png'))
 
     def should_evaluate(self, message):
-        if isinstance(message.channel, discord.Thread) and 'Scam Discussion' in message.channel.name:
+        if isinstance(message.channel, discord.Thread) and 'Scam' in message.channel.name:
             return True
         return False
 
@@ -190,25 +239,14 @@ class DetectorBot(discord.Client):
 
         prompt = (f"""
         \n Here is the conversation so far: \n\n""" + conversation_history +
-        """\n\n 
-        
-        Your response should look like this which can be directly serialized into dictionary in python, the score should 
-        be an integer between 0 to 100. Do note that it takes multiple signals for the score to be high.
-        
-        {
-        "score": ..., 
-        "explanation": "..." 
-        "scammer": "..."
-        "victim": "..."
-        }
-        
-        """)
+                  """\n\n 
+                  """)
 
         try:
             # Call to the OpenAI API with the accumulated thread conversation as context
             client = OpenAI(api_key=openai_token)
             response = client.chat.completions.create(
-                model="gpt-4-turbo",
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "user",
@@ -216,17 +254,29 @@ class DetectorBot(discord.Client):
                     },
                     {
                         "role": "system",
-                        "content": """You are scam detection algorithm to detect whether there is pig butchering scam. Scammers would do something like the following
+                        "content": """
+                        You are a scam detection algorithm to detect whether there is pig butchering scam. In Pig Butchering scam, scammers would do something like the following
 
                                 1) Building Trust: Scammers start with friendly and engaging conversations to build a rapport and trust over time.
                                 2) Gradual Escalation: They slowly introduce the idea of a financial opportunity, often framed as exclusive and time-sensitive.
                                 3) Financial Opportunity: The scam typically involves suggesting an investment in cryptocurrency, stocks, or a similar venture, promising high returns.
                                 4) Urgency and Secrecy: Scammers create a sense of urgency and encourage keeping the investment opportunity confidential.
                                 5) Manipulation: Use emotional manipulation to pressure the victim into making quick decisions.
-                                6) Discretion: THe scammer will try to move the conversation to a encrypted chatting app such as telegram, whatsapp, signal. They will use tactics to make it hard to catch the spelling to present detection 
-                                7) Scripted: The scammer will try very hard to stick to a script and wouldn't want to waste time, so the conversation may seem unnatural in terms of directness and sometimes repetitiveness. 
     
-                        Please check if the conversation have these elements and evaluate the conversations. Your goal is to check in this conversation who is the scammer and who is the victim. You always return results in JSON format with no additional description or context"""
+                        Please check if the conversation have these elements and evaluate the conversations. Your goal is to check in this conversation who is the scammer and who is the victim. You always return results in JSON format. Do note that it is normal for regular people to have conversations that involve investments, but it usually happens between acquaintances. Pay particular attention to signs of deception.
+
+                        As part of outcome, please also evaluate each of the following deception risk factors on a scale from 0 (None), 1 (low), 2 (medium), 3 (high) and explain why:
+                            1) Distraction: The scammer uses tactics to divert the victim's attention away from key facts or inconsistencies.
+                            2) Social Compliance: The scammer relies on perceived authority or societal norms to persuade the victim.
+                            3) Herd: The scammer suggests that others believe or do something to make the victim feel safer in compliance.
+                            4) Dishonesty: The scammer leverages the victim's own dishonest or unethical behavior to manipulate them further.
+                            5) Kindness: The scammer exploits the victim's good nature and willingness to help. 
+                            6) Need and Greed: The scammer manipulates the victim’s desires or needs to influence their behavior.
+                            7) Time Pressure: The scammer imposes urgency to limit the victim’s decision-making time.
+                            8) Discretion: The scammer will try to move the conversation to a encrypted chatting app such as telegram, whatsapp, signal, etc. They also know that there are automated systems for finding this, so will try to avoid ways of getting detected. 
+                            9) Scripted: The scammer will stick to a script and wouldn't want to waste time, sometimes repeating same information. 
+
+                        """
                     }
                 ],
                 temperature=1,
@@ -237,32 +287,165 @@ class DetectorBot(discord.Client):
                 function_call={
                     "name": "llm_evaluation"
                 },
-                functions=[{"name": "llm_evaluation",
-                            "description": "evaluation results from LLM",
-                            "parameters": {
+                functions=[{
+                    "name": "llm_evaluation",
+                    "description": "Evaluation results from LLM",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "score": {
+                                "type": "number",
+                                "description": "A risk score between 0 and 100 indicating how suspicious this message sender is"
+                            },
+                            "explanation": {
+                                "type": "string",
+                                "description": "An explanation for the risk score"
+                            },
+                            "scammer": {
+                                "type": "string",
+                                "description": "Name of the scammer in the conversation"
+                            },
+                            "victim": {
+                                "type": "string",
+                                "description": "Name of the victim in the conversation"
+                            },
+                            "deception_risk_factors": {
                                 "type": "object",
                                 "properties": {
-                                    "score": {
-                                        "type": "number",
-                                        "description": "A risk score between 0 and 100 indicating how suspicious this message sender is"
+                                    "distraction": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
                                     },
-                                    "explanation": {
-                                        "type": "string",
-                                        "description": "An explanation for the risk score"
+                                    "social_compliance": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
                                     },
-
-                                    "scammer": {
-                                        "type": "string",
-                                        "description": "Name of the scammer in the conversatio"
+                                    "herd": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
                                     },
-                                    "victim": {
-                                        "type": "string",
-                                        "description": "Name of the victim in the conversation"
+                                    "dishonesty": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
+                                    },
+                                    "kindness": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
+                                    },
+                                    "need_and_greed": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
+                                    },
+                                    "time_pressure": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
+                                    },
+                                    "discretion": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
+                                    },
+                                    "scripted": {
+                                        "type": "object",
+                                        "properties": {
+                                            "score": {
+                                                "type": "number",
+                                                "description": "Assign 0 for Absent, 1 for Low, 2 for Medium, 3 for High presence of the risk factor"
+                                            },
+                                            "explanation": {
+                                                "type": "string",
+                                                "description": "Explain the magnitude for the score in detail with evidence and critical reasoning"
+                                            }
+                                        }
                                     }
                                 },
-                                "required":["score", "explanation", "scammer", "victim"]
-                                }
-                            }]
+                                "required": [
+                                    "distraction",
+                                    "social_compliance",
+                                    "herd",
+                                    "dishonesty",
+                                    "kindness",
+                                    "need_and_greed",
+                                    "time_pressure",
+                                    "discretion",
+                                    "scripted"
+                                ]
+                            }
+                        },
+                        "required": ["score", "explanation", "scammer", "victim", "deception_risk_factors"]
+                    }
+                }]
             )
             return response.choices[0].message.function_call.arguments
         except Exception as e:
@@ -270,9 +453,9 @@ class DetectorBot(discord.Client):
             return "Sorry, I encountered an error while processing your request."
 
     def track_conversation(self, message, thread_id):
-        # Storing messages in the thread-specific conversation history
         if thread_id not in self.threaded_conversations:
-            self.threaded_conversations[thread_id] = deque(maxlen=100)
+            self.threaded_conversations[thread_id] = deque(maxlen=1000)
+            self.session_risk[thread_id] = {'highest_score': 0, 'entries': []}
         self.threaded_conversations[thread_id].append(f"{message.author.display_name}: {message.content}")
 
     def eval_text(self, message):

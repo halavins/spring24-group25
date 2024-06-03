@@ -49,9 +49,13 @@ class ScamClassifier:
 
         # Make prediction
         with torch.no_grad():
-            outputs = self.model(input_ids, attention_mask=attention_mask)
-            probabilities = torch.softmax(outputs.logits, dim=-1)
-            predicted_class = torch.argmax(probabilities, dim=1).cpu().item()
+            try:
+                outputs = self.model(input_ids, attention_mask=attention_mask)
+                probabilities = torch.softmax(outputs.logits, dim=-1)
+                predicted_class = torch.argmax(probabilities, dim=1).cpu().item()
+            except:
+                print(outputs)
+                print(input_ids)
 
         return self.LABEL_MAPPING[predicted_class]
 
