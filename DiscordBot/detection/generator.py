@@ -1,10 +1,9 @@
-import os
 import json
 import logging
-import discord
+import os
 import re
-from collections import deque
-from openai import OpenAI
+
+import discord
 
 from DiscordBot.detection.bots.ai_bot import AIChatbot
 
