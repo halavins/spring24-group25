@@ -2,5 +2,3 @@ tokens.json
 .DS_Store
 .idea/
 __pycache__
-DiscordBot/model/generated_conversations/*.json
-DiscordBot/model/scam_detection_model/model.safetensors
