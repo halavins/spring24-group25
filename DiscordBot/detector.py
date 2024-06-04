@@ -89,6 +89,19 @@ class DetectorBot(discord.Client):
         channel_topic = message.channel.name
         convo_history = f"""Channel: {channel_topic} \nFraud Score: {ip_fraud_score} \nMessage: {chat_history}"""
         return convo_history
+    
+    async def update_review(self, thread_id, current_score, case_update, new_status):
+        self.session_risk[thread_id]['highest_score'] = current_score
+        review = self.thread_id_to_review
+        review.case_override = case_update
+        review_id = self.thread_id_to_review_id[thread_id]
+        review_thread = client.get_channel(review_id)
+        await review_thread.send(review.report_to_string())
+        self.alert_queue[thread_id] = {
+            'status': new_status
+        }
+
+
     async def handle_channel_message(self, message: discord.Message):
 
         discussion_channel = message.channel.name
@@ -151,6 +164,7 @@ class DetectorBot(discord.Client):
                     return
                 
                 if message.channel.id not in self.alert_queue:
+                    # Initialize review
                     self.alert_queue[message.channel.id] = {
                         'status': 'monitored'
                     }
@@ -161,9 +175,9 @@ class DetectorBot(discord.Client):
                     case_override = f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results])
                     review = Review(client, "I get overriden", channel_override=mod_channel, case_override=case_override)
                     await review.initiate_review()
-                    self.thread_id_to_review[message.channel.id] = review
+                    self.thread_id_to_review[thread_id] = review
                     self.reviews[review.thread.id] = review
-                    self.thread_id_to_review_id[message.channel.id] = review.thread.id
+                    self.thread_id_to_review_id[thread_id] = review.thread.id
 
                     # await review_thread.send(
                     #     f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results]))
@@ -183,37 +197,40 @@ class DetectorBot(discord.Client):
                 })
                 # If evaluation result is 0, send message in mod thread indicating conversation no longer monitored
                 if current_score == 0:
-                    self.session_risk[thread_id]['highest_score'] = current_score
-                    case_update = "Case dismissed"
-                    review = self.thread_id_to_review
-                    review.case_override = case_update
-                    review_id = self.thread_id_to_review_id[thread_id]
-                    thread = client.get_channel(review_id)
-                    await thread.send(review.report_to_string())
-                    self.alert_queue[message.channel.id] = {
-                        'status': 'dismissed'
-                    }
+                    # self.session_risk[thread_id]['highest_score'] = current_score
+                    # case_update = "Case dismissed"
+                    # review = self.thread_id_to_review
+                    # review.case_override = case_update
+                    # review_id = self.thread_id_to_review_id[thread_id]
+                    # thread = client.get_channel(review_id)
+                    # await thread.send(review.report_to_string())
+                    # self.alert_queue[message.channel.id] = {
+                    #     'status': 'dismissed'
+                    # }
+                    self.update_review(thread_id, current_score, "Case dismissed", "dismissed")
                 # If evaluation result is > 90, send message in mod thread indicating user is banned
                 if current_score > 90:
-                    self.session_risk[thread_id]['highest_score'] = current_score
-                    case_update = "User is banned"
-                    review = self.thread_id_to_review
-                    review.case_override = case_update
-                    review_id = self.thread_id_to_review_id[thread_id]
-                    thread = client.get_channel(review_id)
-                    await thread.send(review.report_to_string())
-                    self.alert_queue[message.channel.id] = {
-                        'status': 'banned'
-                    }
+                    # self.session_risk[thread_id]['highest_score'] = current_score
+                    # case_update = "User is banned"
+                    # review = self.thread_id_to_review
+                    # review.case_override = case_update
+                    # review_id = self.thread_id_to_review_id[thread_id]
+                    # thread = client.get_channel(review_id)
+                    # await thread.send(review.report_to_string())
+                    # self.alert_queue[message.channel.id] = {
+                    #     'status': 'banned'
+                    # }
+                    self.update_review(thread_id, current_score, "User is banned", "banned")
 
                 if evaluation_result_dict["score"] > 60 and (current_score > highest_score + 10):
                     self.session_risk[thread_id]['highest_score'] = current_score  # Update the highest score
                     new_case = f"""\nScam Detected\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}\n""" 
                     new_case += f'''\nExplanation: {evaluation_result_dict["explanation"]}'''
-                    review = self.thread_id_to_review
-                    review.case_override = new_case
-                    review_id = self.thread_id_to_review_id[thread_id]
-                    thread = client.get_channel(review_id)
+                    # review = self.thread_id_to_review
+                    # review.case_override = new_case
+                    # review_id = self.thread_id_to_review_id[thread_id]
+                    # thread = client.get_channel(review_id)
+                    review_thread = self.update_review(thread_id, current_score, new_case, "alerted")
                     # # Disabled editing thread since bot currently not allowed (could change in future)
                     # first_message = thread.starter_message
                     # await first_message.edit(content=review.report_to_string())
@@ -221,12 +238,12 @@ class DetectorBot(discord.Client):
                     # await mod_channel.send(f'''\nExplanation: {evaluation_result_dict["explanation"]}''')
                     # await self.plot_scores(thread_id, self.mod_channels[message.guild.id])
                     # await self.plot_radar(self.mod_channels[message.guild.id], evaluation_result_dict['deception_risk_factors'])
-                    await thread.send(review.report_to_string())
-                    await self.plot_scores(thread, self.mod_channels[message.guild.id])
-                    await self.plot_radar(thread, evaluation_result_dict['deception_risk_factors'])
-                    self.alert_queue[message.channel.id] = {
-                        'status': 'alerted'
-                    }
+                    # await thread.send(review.report_to_string())
+                    await self.plot_scores(review_thread, self.mod_channels[thread_id])
+                    await self.plot_radar(review_thread, evaluation_result_dict['deception_risk_factors'])
+                    # self.alert_queue[message.channel.id] = {
+                    #     'status': 'alerted'
+                    # }
 
     async def plot_radar(self, mod_channel, radar_data):
         data = radar_data
