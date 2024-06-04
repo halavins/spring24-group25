@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from openai import OpenAI
 
-from DiscordBot.detection.rules.evaluator import RuleEngine
+from rules.evaluator import RuleEngine
 
 # Set up logging to the console
 logger = logging.getLogger('discord')
@@ -22,7 +22,7 @@ handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(me
 logger.addHandler(handler)
 
 # There should be a file called 'tokens.json' inside the same folder as this file
-token_path = '../tokens.json'
+token_path = 'tokens.json'
 if not os.path.isfile(token_path):
     raise Exception(f"{token_path} not found!")
 with open(token_path) as f:

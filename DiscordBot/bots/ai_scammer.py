@@ -22,7 +22,7 @@ class AIScammer:
         self.threaded_conversations = deque(maxlen=500)
         self.openai_token = None
 
-        token_path = '../tokens.json'
+        token_path = 'tokens.json'
         if not os.path.isfile(token_path):
             raise Exception(f"{token_path} not found!")
         with open(token_path) as f:

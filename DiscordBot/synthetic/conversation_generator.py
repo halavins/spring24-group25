@@ -73,7 +73,7 @@ channels_topics_data = load_json_data('channels_topics.json')['channels_topics']
 
 
 # There should be a file called 'tokens.json' inside the same folder as this file
-token_path = '../../tokens.json'
+token_path = '../tokens.json'
 if not os.path.isfile(token_path):
     raise Exception(f"{token_path} not found!")
 with open(token_path) as f:
