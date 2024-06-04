@@ -13,6 +13,7 @@ import numpy as np
 from openai import OpenAI
 
 from rules.evaluator import RuleEngine
+from review import Review
 
 # Set up logging to the console
 logger = logging.getLogger('discord')
@@ -46,6 +47,9 @@ class DetectorBot(discord.Client):
         self.last_sent_index = {}
         self.rule_evaluator = RuleEngine()
         self.alert_queue = {}
+        self.thread_id_to_review = {}
+        self.thread_id_to_review_id = {}
+        self.reviews = {}
 
     async def on_ready(self):
         print(f'{self.user.name} has connected to Discord! It is these guilds:')
@@ -68,7 +72,6 @@ class DetectorBot(discord.Client):
 
 
     async def on_message(self, message):
-
         if message.author.id == self.user.id and not self.should_evaluate(message):
             return
 
@@ -91,6 +94,46 @@ class DetectorBot(discord.Client):
         discussion_channel = message.channel.name
         if isinstance(message.channel, discord.Thread):
             discussion_channel = message.channel.parent.name
+        
+        # Handle report reviews
+        elif message.channel.id in self.reviews:
+            await self.reviews[message.channel.id].handle_message(message)
+        
+        # allow mods in mod channel to @bot to be added to highest priority thread
+        if discussion_channel == f'group-{self.group_num}-mod':
+            if 'Group 25 Bot' not in [mention.name for mention in message.mentions]:
+                return
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"Caught exception during delete: {e}")
+            
+            ####
+            # TODO: remove this block of test setup
+            # try:
+            #     test_thread = await message.channel.create_thread(name="Test thread", type=discord.ChannelType.public_thread)
+            # except Exception as e:
+            #     print(f"Caught exception during thread creation: {e}")  
+            # self.session_risk[test_thread.id] = {
+            #     'highest_score': 10
+            # }
+            # self.alert_queue[test_thread.id] = {
+            #     'status': 'alerted'
+            # }
+            ####
+
+            # get top priority thread in 'alerted' status
+            highest_score = 0
+            highest_thread_id = None 
+            for thread_id in self.session_risk:
+                if self.session_risk[thread_id]['highest_score'] > highest_score and self.alert_queue[thread_id] and self.alert_queue[thread_id]['status'] == 'alerted':
+                    highest_score = self.session_risk[thread_id]['highest_score']
+                    highest_thread_id = thread_id
+            
+            thread = client.get_channel(highest_thread_id)
+            await thread.send(f"<@{message.author.id}>")
+            return
+
         if not discussion_channel == f'group-{self.group_num}':
             return
 
@@ -102,35 +145,88 @@ class DetectorBot(discord.Client):
             if self.should_evaluate(message):
                 features = self.construct_classification_input(message)
                 rule_eval_results = self.rule_evaluator.evaluate(message, features)
-                under_monitoring = (thread_id in self.alert_queue and self.alert_queue[thread_id]['status'] != 'dismissed')
+                under_monitoring = (thread_id in self.alert_queue and self.alert_queue[thread_id]['status'] not in ['dismissed', 'banned'])
 
-                if rule_eval_results or under_monitoring:
-                    if message.channel.id not in self.alert_queue:
-                        self.alert_queue[message.channel.id] = {
-                            'status': 'watched'
-                        }
-                        await mod_channel.send(
-                            f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results]))
+                if not rule_eval_results and not under_monitoring:
+                    return
+                
+                if message.channel.id not in self.alert_queue:
+                    self.alert_queue[message.channel.id] = {
+                        'status': 'monitored'
+                    }
+                    # await mod_channel.send(
+                    #     f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results]))
+                    # review_thread = await mod_channel.create_thread(name="Test TODO replace uuid", type=discord.ChannelType.public_thread)
+                    # self.reports
+                    case_override = f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results])
+                    review = Review(client, "I get overriden", channel_override=mod_channel, case_override=case_override)
+                    await review.initiate_review()
+                    self.thread_id_to_review[message.channel.id] = review
+                    self.reviews[review.thread.id] = review
+                    self.thread_id_to_review_id[message.channel.id] = review.thread.id
 
-                    evaluation_result = self.evaluate_risk(message)
-                    evaluation_result_dict = self.code_format(evaluation_result)
-                    current_score = evaluation_result_dict["score"]
-                    highest_score = self.session_risk[thread_id]['highest_score']
-                    self.session_risk[thread_id]['entries'].append({
-                        'datetime': message.created_at,
-                        'score': current_score,
-                        'message': message.content,
-                        'explanation': evaluation_result_dict["explanation"],
-                    })
-                    if evaluation_result_dict["score"] > 60 and (current_score > highest_score + 10):
-                        self.session_risk[thread_id]['highest_score'] = current_score  # Update the highest score
-                        await mod_channel.send(f"""\nScam Detected\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}""" )
-                        await mod_channel.send(f'''\nExplanation: {evaluation_result_dict["explanation"]}''')
-                        await self.plot_scores(thread_id, self.mod_channels[message.guild.id])
-                        await self.plot_radar(self.mod_channels[message.guild.id], evaluation_result_dict['deception_risk_factors'])
-                        self.alert_queue[message.channel.id] = {
-                            'status': 'alerted'
-                        }
+                    # await review_thread.send(
+                    #     f"""Discussion {thread_id} Added to Watchlist for Advanced Monitoring!\n""" + '\n'.join(['\t\t-' + z for z in rule_eval_results]))
+
+                # Test end line here
+                # return
+
+                evaluation_result = self.evaluate_risk(message)
+                evaluation_result_dict = self.code_format(evaluation_result)
+                current_score = evaluation_result_dict["score"]
+                highest_score = self.session_risk[thread_id]['highest_score']
+                self.session_risk[thread_id]['entries'].append({
+                    'datetime': message.created_at,
+                    'score': current_score,
+                    'message': message.content,
+                    'explanation': evaluation_result_dict["explanation"],
+                })
+                # If evaluation result is 0, send message in mod thread indicating conversation no longer monitored
+                if current_score == 0:
+                    self.session_risk[thread_id]['highest_score'] = current_score
+                    case_update = "Case dismissed"
+                    review = self.thread_id_to_review
+                    review.case_override = case_update
+                    review_id = self.thread_id_to_review_id[thread_id]
+                    thread = client.get_channel(review_id)
+                    await thread.send(review.report_to_string())
+                    self.alert_queue[message.channel.id] = {
+                        'status': 'dismissed'
+                    }
+                # If evaluation result is > 90, send message in mod thread indicating user is banned
+                if current_score > 90:
+                    self.session_risk[thread_id]['highest_score'] = current_score
+                    case_update = "User is banned"
+                    review = self.thread_id_to_review
+                    review.case_override = case_update
+                    review_id = self.thread_id_to_review_id[thread_id]
+                    thread = client.get_channel(review_id)
+                    await thread.send(review.report_to_string())
+                    self.alert_queue[message.channel.id] = {
+                        'status': 'banned'
+                    }
+
+                if evaluation_result_dict["score"] > 60 and (current_score > highest_score + 10):
+                    self.session_risk[thread_id]['highest_score'] = current_score  # Update the highest score
+                    new_case = f"""\nScam Detected\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}\n""" 
+                    new_case += f'''\nExplanation: {evaluation_result_dict["explanation"]}'''
+                    review = self.thread_id_to_review
+                    review.case_override = new_case
+                    review_id = self.thread_id_to_review_id[thread_id]
+                    thread = client.get_channel(review_id)
+                    # # Disabled editing thread since bot currently not allowed (could change in future)
+                    # first_message = thread.starter_message
+                    # await first_message.edit(content=review.report_to_string())
+                    # await mod_channel.send(f"""\nScam Detected\nScammer: {evaluation_result_dict['scammer']}\nVictim: {evaluation_result_dict['victim']}\nMessage: {message.content}\nScore: {evaluation_result_dict["score"]}""" )
+                    # await mod_channel.send(f'''\nExplanation: {evaluation_result_dict["explanation"]}''')
+                    # await self.plot_scores(thread_id, self.mod_channels[message.guild.id])
+                    # await self.plot_radar(self.mod_channels[message.guild.id], evaluation_result_dict['deception_risk_factors'])
+                    await thread.send(review.report_to_string())
+                    await self.plot_scores(thread, self.mod_channels[message.guild.id])
+                    await self.plot_radar(thread, evaluation_result_dict['deception_risk_factors'])
+                    self.alert_queue[message.channel.id] = {
+                        'status': 'alerted'
+                    }
 
     async def plot_radar(self, mod_channel, radar_data):
         data = radar_data
