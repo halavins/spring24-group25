@@ -49,7 +49,7 @@ class ModBot(discord.Client):
         print('Press Ctrl-C to quit.')
 
         # Parse the group number out of the bot's name
-        match = re.search(r'[gG]roup (\d+) [bB]ot', self.user.name)
+        match = re.search(r'[gG]roup (\d+) Pig Butchering [bB]ot', self.user.name)
         if match:
             self.group_num = match.group(1)
         else:

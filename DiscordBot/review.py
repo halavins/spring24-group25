@@ -16,15 +16,17 @@ class ModState(Enum):
     MOD_REPORT_MALICIOUS = auto()
 
 class Review:
-    def __init__(self, client, report):
+    def __init__(self, client, report, channel_override=None, case_override=None):
         self.client = client
         self.report = report
         self.modState = ModState.MOD_REPORT_AWAITING_REVIEW
         self.began = False
+        self.channel_override = channel_override
+        self.case_override = case_override
 
     async def initiate_review(self):
         # Get the mod channel from the initial message
-        channel = self.client.mod_channels[self.report.message.guild.id]
+        channel = self.channel_override if self.channel_override else self.client.mod_channels[self.report.message.guild.id]
         # Create the report message from this Report object
         report_message = self.report_to_string()
         # Send report thread to mod
@@ -119,5 +121,5 @@ class Review:
 
     def report_to_string(self):
         message = f"Message Report\n"
-        message += "```" + json.dumps(self.report.case, indent=2) + "```"
+        message += "```" + json.dumps(self.case_override if self.case_override else self.report.case, indent=2) + "```"
         return message
