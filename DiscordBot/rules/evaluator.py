@@ -1,7 +1,7 @@
 import json
 import discord
 
-from DiscordBot.detection.model.model_inference import ScamClassifier
+from model.model_inference import ScamClassifier
 
 
 class RuleEngine:

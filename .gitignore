@@ -1,5 +1,5 @@
 *.log
 DiscordBot/tokens.json
 TABot/tokens.json
-DiscordBot/detection/model/generated_conversations/*.json
-DiscordBot/detection/model/scam_detection_model/model.safetensors
+DiscordBot/model/generated_conversations/*.json
+DiscordBot/model/scam_detection_model/model.safetensors

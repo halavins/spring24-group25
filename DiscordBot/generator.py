@@ -5,7 +5,7 @@ import re
 
 import discord
 
-from DiscordBot.detection.bots.ai_bot import AIChatbot
+from bots.ai_bot import AIChatbot
 
 # Set up logging to the console
 logger = logging.getLogger('discord')
@@ -15,7 +15,7 @@ handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(me
 logger.addHandler(handler)
 
 # There should be a file called 'tokens.json' inside the same folder as this file
-token_path = '../tokens.json'
+token_path = 'tokens.json'
 if not os.path.isfile(token_path):
     raise Exception(f"{token_path} not found!")
 with open(token_path) as f:
