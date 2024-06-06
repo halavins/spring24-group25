@@ -114,7 +114,7 @@ class DetectorBot(discord.Client):
         
         # allow mods in mod channel to @bot to be added to highest priority thread
         if discussion_channel == f'group-{self.group_num}-mod':
-            if 'Group 25 Bot' not in [mention.name for mention in message.mentions]:
+            if 'Group 25 Pig Butchering Bot' not in [mention.name for mention in message.mentions]:
                 return
             try:
                 await message.delete()
@@ -143,8 +143,9 @@ class DetectorBot(discord.Client):
                     highest_score = self.session_risk[thread_id]['highest_score']
                     highest_thread_id = thread_id
             
-            thread = client.get_channel(highest_thread_id)
-            await thread.send(f"<@{message.author.id}>")
+            review_thread_id = self.thread_id_to_review_id[highest_thread_id]
+            review_thread = client.get_channel(review_thread_id)
+            await review_thread.send(f"<@{message.author.id}>")
             return
 
         if not discussion_channel == f'group-{self.group_num}':
